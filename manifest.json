@@ -167,6 +167,24 @@
       "params": { "seed": true, "coat": { "red": "red", "sable": "sable", "tri": "tri", "bht": "bht" } },
       "scores": null,
       "notes": "v1 run, prompt pasted verbatim. Model, effort and harness version are taken from the Claude Code session log. The harness started in its own run folder, and the model read no files there except its own. The claude.ai usage limit paused the run after 52 minutes; it resumed on its own about 2 hours later and the model delivered 2 minutes after that. wall_min counts model working time only and leaves out the pause. Three.js r170: surface-nets SDF rump with up to 86 instanced fur shells in three sets, seeded sfc32 sub-streams, 7 wiggle types and spring fur lag. The body fades out toward mid-back, so a straight-on front view shows the faded front as a smooth disc. After delivery the operator sent \"finish it\" and the model kept editing; under the one-attempt rule that later version is not this entry. Tokens are summed over the 92 API requests in the session log. The input figure includes 25,498,597 cache-read and 668,979 cache-write tokens. There is no USD cost because the run used a claude.ai subscription. Checked in headless Chrome at 400x400 DPR 2 from file://: all four coats load with no console output, and a click at the canvas centre starts a wiggle. About 5 ms GPU time per frame on an M4; not measured on an M1. Adaptive quality steps down only when the median frame time is over 40 ms, so it did not trigger on the M4."
+    },
+    {
+      "id": "gemini-3-flash-20261017",
+      "model": { "id": "gemini-3-flash-preview", "name": "Gemini 3 Flash (free)", "provider": "Google" },
+      "harness": { "name": "Gemini CLI", "version": "0.64.0" },
+      "effort": null,
+      "date": "2026-10-17",
+      "prompt_version": "v1",
+      "first_try": true,
+      "wall_min": 56,
+      "tokens": { "input": 563056, "output": 30543 },
+      "cost_usd": null,
+      "file": "runs/gemini-3-flash-20261017/index.html",
+      "sha256": "f826b6eb070fa2c08e2a5e8116355a9d6ac032056c06486906b10c540f9280cd",
+      "three_version": "0.160.0",
+      "params": { "seed": true, "coat": { "red": "red", "sable": "sable", "tri": "tri", "bht": "bht" } },
+      "scores": null,
+      "notes": "v1 run in Gemini CLI on the free tier, started as a Gemini 3 Pro run. The session summary shows gemini-3.1-pro-preview with 1 request and 0 tokens, and all 23 working requests on gemini-3-flash-preview, so the entry is recorded as Flash. The harness does not show a thinking setting, so effort is null. Harness version is the Gemini CLI installed on the run machine at submission time. wall_min is the session's wall time (56m 9s); agent active time was 11m 23s. Tokens are from the session summary; the harness lists 354,618 cache reads separately from input. No cost because the run used the free tier. Three.js r160 with a seeded mulberry32 RNG and #seed/#coat handling. Checked in headless Chrome at 400x400 DPR 2 from file://: all four coats load with no console output. The default view renders as a soft, grainy fur dome."
     }
   ]
 }
