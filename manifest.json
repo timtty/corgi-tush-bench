@@ -203,6 +203,24 @@
       "params": { "seed": true, "coat": { "red": "red", "sable": "sable", "tri": "tri", "bht": "bht" } },
       "scores": null,
       "notes": "v1 run in opencode 2.0.30 (build agent) on the amazon-bedrock provider. Model id us.openai.gpt-6.1-sol and variant xhigh are read from every assistant message in the opencode session store (~/.local/share/opencode/opencode.db, session ses_eb6fd377effePTaoDvL0UdUSrx). The pasted prompt matches prompts/v1.md except that it ends in a single trailing space instead of the final newline. The harness started in its own empty run folder; the model read only its own corgi.html and its own screenshots in a temp folder, and installed Playwright to that temp folder. One user message and no operator messages after delivery. Delivered as corgi.html. wall_min is first prompt (08:38:01 UTC) to final reply (09:13:46 UTC), 35.7 minutes. Tokens are summed over the 49 assistant requests in the session store: input is 16,156 uncached plus 3,260,427 cache-read and 132,066 cache-write; output is 106,638, with reasoning reported as 0. The session row's own totals are slightly higher (input 16,158, output 106,655, cache read 3,261,998). cost_usd is the cost opencode reported for the session ($1.9304). Checked in headless Chrome at 400x400 DPR 2 from file://: all four coats load with no console output, and a click at the canvas centre starts a wiggle. The model reported about 60 fps on an M4 Pro; not measured on an M1."
+    },
+    {
+      "id": "gpt-6-1-sol-medium-20261017",
+      "model": { "id": "us.openai.gpt-6.1-sol", "name": "GPT-6.1 Sol", "provider": "OpenAI (via Amazon Bedrock)" },
+      "harness": { "name": "opencode", "version": "2.0.30" },
+      "effort": "medium",
+      "date": "2026-10-17",
+      "prompt_version": "v1",
+      "first_try": true,
+      "wall_min": 19,
+      "tokens": { "input": 2082723, "output": 54004 },
+      "cost_usd": 1.11,
+      "file": "runs/gpt-6-1-sol-medium-20261017/index.html",
+      "sha256": "53fc974ed5a47637f824e95795a43edf4d951b1ee310841ece3a9b889e6ed901",
+      "three_version": "0.170.0",
+      "params": { "seed": true, "coat": { "red": "red", "sable": "sable", "tri": "tri", "bht": "bht" } },
+      "scores": null,
+      "notes": "v1 run in opencode, served through Amazon Bedrock (provider amazon-bedrock, cross-region inference profile us.openai.gpt-6.1-sol). Model id and effort (opencode variant \"medium\") are taken from the opencode session export; harness version is the opencode installed on the run machine at submission time, which was also the version in use when the operator fixed the Bedrock config just before the run. The pasted prompt matches prompts/v1.md except that its final character is a space where the file has a trailing newline. One prompt, one turn, no operator messages after it. Four earlier sessions in the same folder failed at provider initialization with zero tokens and the model never ran; one more session was a \"hi\" connectivity check. The run folder held only a .cursor/ hook-state directory from the operator's Cursor session; the model ran pwd and never listed or read it. The model installed Playwright in a temp directory and checked its own file in headless Chrome during the run. wall_min is from the prompt (02:15:38) to the end of the final response (02:34:11), 18m 33s. Tokens are summed over the 43 assistant requests: input is 15,276 uncached plus 1,971,723 cache-read and 95,724 cache-write tokens; reasoning tokens are reported as 0. The session's own totals are slightly higher (15,278 uncached, 54,019 output, 97,295 cache-write). cost_usd is the session cost opencode reported ($1.1080), on Bedrock pay-per-use. Three.js r170. Checked in Chrome (headless, Playwright) at 400x400 DPR 2 over a local http.server on an M4 Pro: all four coats render distinctly with #seed=1, a click at the canvas centre starts a wiggle, and the only console output was one 404 on the first page load, which did not recur on reload; the file references no local resources."
     }
   ]
 }

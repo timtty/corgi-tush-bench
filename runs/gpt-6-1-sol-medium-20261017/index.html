@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="color-scheme" content="light">
+<title>Corgi</title>
+<style>html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#e9e4db}canvas{display:block;width:100%;height:100%;touch-action:none;outline:none}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// One stream supplies every random decision. Animation itself never consumes it:
+// a seed therefore reproduces the click sequence, regardless of time spent idle.
+const params = new URLSearchParams(location.hash.slice(1));
+const suppliedSeed = params.get('seed');
+const seedText = suppliedSeed !== null && /^\d+$/.test(suppliedSeed)
+  ? BigInt(suppliedSeed).toString() : String(crypto.getRandomValues(new Uint32Array(1))[0]);
+let state = 2166136261;
+for (const c of seedText) state = Math.imul(state ^ c.charCodeAt(0),16777619) >>> 0;
+function random() {
+  state = (state + 0x6d2b79f5) >>> 0;
+  let a = Math.imul(state ^ state >>> 15, 1 | state);
+  a ^= a + Math.imul(a ^ a >>> 7, 61 | a);
+  return ((a ^ a >>> 14) >>> 0) / 4294967296;
+}
+const coats = ['red','sable','tri','bht'];
+const chosenCoat = coats[Math.floor(random()*4)];
+const coat = coats.includes(params.get('coat')) ? params.get('coat') : chosenCoat;
+const coatWarmth = random();
+const noisePhase = random()*20;
+const recipes = [];
+let previous = -1;
+for(let batch=0;batch<128;batch++) {
+  const order=[0,1,2,3];
+  for(let j=3;j>0;j--) {const k=Math.floor(random()*(j+1));[order[j],order[k]]=[order[k],order[j]];}
+  if(order[0]===previous) [order[0],order[1]]=[order[1],order[0]];
+  for(const type of order) recipes.push({type,speed:.85+random()*.3,amp:.85+random()*.3,phase:random()*.6,sign:random()<.5?-1:1});
+  previous=order[3];
+}
+if(recipes[recipes.length-1].type===recipes[0].type){const n=recipes.length;[recipes[n-1],recipes[n-2]]=[recipes[n-2],recipes[n-1]];}
+const idlePhases = Array.from({length:24},()=>({duration:3.5+random()*4,lean:(random()-.5)*.037}));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#e9e4db');
+scene.fog = new THREE.Fog('#e9e4db',8,19);
+const renderer = new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(36,1,.025,35);
+camera.position.set(0,1.79,4.20);
+const controls = new OrbitControls(camera,renderer.domElement);
+controls.target.set(0,0,-.24);
+const framingTarget=new THREE.Vector3(0,.73,-.24);
+controls.enableDamping=true;
+controls.dampingFactor=.075;
+controls.enablePan=false;
+controls.enableZoom=false;
+controls.minPolarAngle=THREE.MathUtils.degToRad(20);
+controls.maxPolarAngle=THREE.MathUtils.degToRad(87);
+controls.rotateSpeed=.65;
+controls.update();
+camera.lookAt(framingTarget);
+scene.add(new THREE.HemisphereLight('#fff8ea','#b7a28b',2.85));
+const key=new THREE.DirectionalLight('#fff0d8',2.45);
+key.position.set(-3.4,5.6,3.6);
+key.castShadow=true;
+key.shadow.mapSize.set(512,512);
+Object.assign(key.shadow.camera,{left:-2.8,right:2.8,top:2.8,bottom:-2.8,near:.1,far:12});
+key.shadow.bias=-.001;
+key.shadow.normalBias=.035;
+key.shadow.radius=5;
+scene.add(key);
+const fill=new THREE.DirectionalLight('#e4eaff',1.1);fill.position.set(3,2,-3);scene.add(fill);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:'#e9e4db',roughness:1}));
+ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+
+// Broad analytic contact shadows supplement the soft directional shadow.
+const contactMaterial=new THREE.ShaderMaterial({transparent:true,depthWrite:false,uniforms:{opacity:{value:.17}},vertexShader:`varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,fragmentShader:`varying vec2 vUv;uniform float opacity;void main(){float r=length((vUv-.5)*2.);gl_FragColor=vec4(.24,.19,.14,opacity*exp(-r*r*4.)*(1.-smoothstep(.75,1.,r)));}`});
+function contact(x,z,sx,sz,opacity){const m=new THREE.Mesh(new THREE.PlaneGeometry(sx,sz),contactMaterial.clone());m.material.uniforms.opacity.value=opacity;m.rotation.x=-Math.PI/2;m.position.set(x,.003,z);scene.add(m);return m;}
+const bellyContact=contact(0,-.08,1.9,2.2,.16);
+const footContacts=[contact(-.47,.24,.5,.65,.28),contact(.47,.24,.5,.65,.28)];
+
+const uniforms = {
+  uMotion:{value:new THREE.Vector4()}, // lateral displacement, roll, yaw, elevation
+  uFur:{value:new THREE.Vector3()},
+  uTime:{value:0},uHop:{value:0},uSquash:{value:0},uPart:{value:0},uInfill:{value:0},uNoisePhase:{value:noisePhase}
+};
+const deformation = `
+uniform vec4 uMotion;uniform vec3 uFur;uniform float uTime,uHop,uSquash,uPart,uInfill;
+float rearWeight(vec3 p){return smoothstep(-1.45,.5,p.z);}
+vec3 deform(vec3 p){
+ float fluff=uPart<.5?smoothstep(.24,.70,p.z)*(1.-smoothstep(.75,1.15,p.y))*.34:uPart>1.5?.20:0.;
+ float w=rearWeight(p);
+ if(uPart>.5&&uPart<1.5) w=smoothstep(.15,.65,p.y);
+ if(uPart>1.5) w=1.;
+ vec3 q=p-vec3(0.,.80,.23);
+ float a=uMotion.y*w;
+ q.xy=mat2(cos(a),sin(a),-sin(a),cos(a))*q.xy;
+ float b=uMotion.z*w;
+ q.xz=mat2(cos(b),sin(b),-sin(b),cos(b))*q.xz;
+ p=q+vec3(0.,.80,.23);
+ p.x+=uMotion.x*w;
+ p.y+=uMotion.w*w+uHop;
+ p.y-=uSquash*smoothstep(.15,1.4,p.y)*w;
+ p+=uFur*fluff;
+ return p;
+}
+float frontFade(float z){return smoothstep(-1.38,-.61,z);}
+`;
+function soft(a,b,x){const t=THREE.MathUtils.clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);}
+function noise(x,y,z){return Math.sin(x*16.1+y*12.7+z*9.3+noisePhase)*.45+Math.sin(x*37.3-y*25.1+z*30.7)*.23+Math.sin(x*6.3+y*5.1-z*7.7)*.32;}
+const white=new THREE.Color('#eadfcf');
+const warmWhite=new THREE.Color('#f4eee1');
+const tan=new THREE.Color().setRGB(.47+coatWarmth*.07,.205+coatWarmth*.025,.062);
+const red=new THREE.Color().setRGB(.43+coatWarmth*.07,.165+coatWarmth*.035,.042);
+const dark=new THREE.Color('#302a25');
+const sable=new THREE.Color('#57432f');
+function colorAt(x,y,z,part=0,variation=0){
+ const n=noise(x,y,z);
+ let base=tan.clone();
+ if(coat==='red')base.copy(red);
+ if(coat==='sable'){
+   const saddle=soft(.83,1.29,y)*(.45+.28*soft(-.3,.6,z));
+   base.lerp(sable,THREE.MathUtils.clamp(saddle+n*.1,0,.8));
+ }
+ if(coat==='tri'||coat==='bht'){
+   const saddle=soft(.67+n*.038,.90+n*.045,y)*soft(-1.65,-.7,z);
+   base.lerp(dark,saddle);
+ }
+ // White breeches wrap the bottom and lateral back of each haunch, rather
+ // than painting an identical circular patch onto both sides.
+ const rear=soft(.19,.64,z);
+ const thigh=soft(.20,.43,Math.abs(x))*(1-soft(.66+n*.035,1.02+n*.035,y));
+ const low=1-soft(.73+n*.025,.98+n*.025,y);
+ let pants=THREE.MathUtils.clamp(Math.max(low,thigh)*rear,0,1);
+ if(part===1) pants=1-soft(.43,.68,y);
+ if(part===2) pants=0;
+ const wc=white.clone().lerp(warmWhite,soft(.35,1.2,y));
+ base.lerp(wc,pants);
+ base.multiplyScalar(1+n*.047+variation);
+ return base;
+}
+
+// A smooth implicit union gives a continuous back, two gluteal lobes,
+// tucked abdomen and real projecting haunches, without intersecting spheres.
+function ellipsoid(x,y,z,cx,cy,cz,rx,ry,rz){
+ x-=cx;y-=cy;z-=cz;
+ const k0=Math.sqrt(x*x/(rx*rx)+y*y/(ry*ry)+z*z/(rz*rz));
+ const k1=Math.sqrt(x*x/(rx**4)+y*y/(ry**4)+z*z/(rz**4));
+ return k0*(k0-1)/Math.max(k1,.00001);
+}
+function union(a,b,k){const h=Math.max(k-Math.abs(a-b),0)/k;return Math.min(a,b)-h*h*k*.25;}
+function bodyField(x,y,z){
+ let d=ellipsoid(x,y,z,0,.96,-.61,.545,.465,1.28);
+ d=union(d,ellipsoid(x,y,z,-.285,.878,.43,.395,.415,.395),.15);
+ d=union(d,ellipsoid(x,y,z,.285,.868,.425,.398,.412,.390),.15);
+ d=union(d,ellipsoid(x,y,z,-.455,.66,.285,.233,.325,.315),.10);
+ d=union(d,ellipsoid(x,y,z,.455,.66,.285,.233,.325,.315),.10);
+ // Subtle central cleft beneath the tail; no cartoon anatomical hole.
+ const cleft=ellipsoid(x,y,z,0,.70,.877,.046,.225,.075);
+ d=-union(-d,cleft,.035);
+ return d;
+}
+function legField(side){return(x,y,z)=>{
+ let d=ellipsoid(x,y,z,side*.455,.43,.25,.157,.236,.188);
+ d=union(d,ellipsoid(x,y,z,side*.482,.265,.36,.105,.155,.112),.068);
+ d=union(d,ellipsoid(x,y,z,side*.486,.155,.385,.091,.118,.097),.045);
+ d=union(d,ellipsoid(x,y,z,side*.482,.093,.255,.145,.086,.18),.045);
+ for(const offset of [-.087,-.029,.029,.087])d=union(d,ellipsoid(x,y,z,side*.482+offset,.072,.080,.046,.057,.087),.022);
+ return d;
+};}
+const tetrahedra=[[0,5,1,6],[0,1,2,6],[0,2,3,6],[0,3,7,6],[0,7,4,6],[0,4,5,6]];
+const corners=[[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]];
+function implicitMesh(field,bounds,step,part){
+ const [xmin,xmax,ymin,ymax,zmin,zmax]=bounds;
+ const nx=Math.ceil((xmax-xmin)/step),ny=Math.ceil((ymax-ymin)/step),nz=Math.ceil((zmax-zmin)/step);
+ const dx=(xmax-xmin)/nx,dy=(ymax-ymin)/ny,dz=(zmax-zmin)/nz;
+ const idx=(x,y,z)=>(x*(ny+1)+y)*(nz+1)+z;
+ const values=new Float32Array((nx+1)*(ny+1)*(nz+1));
+ for(let x=0;x<=nx;x++)for(let y=0;y<=ny;y++)for(let z=0;z<=nz;z++)values[idx(x,y,z)]=field(xmin+x*dx,ymin+y*dy,zmin+z*dz);
+ const positions=[],normals=[],colors=[];
+ function normal(p){const e=.001;const n=new THREE.Vector3(field(p[0]+e,p[1],p[2])-field(p[0]-e,p[1],p[2]),field(p[0],p[1]+e,p[2])-field(p[0],p[1]-e,p[2]),field(p[0],p[1],p[2]+e)-field(p[0],p[1],p[2]-e));return n.normalize();}
+ function tri(a,b,c){
+   const na=normal(a),nb=normal(b),nc=normal(c);
+   const cross=new THREE.Vector3().subVectors(new THREE.Vector3(...b),new THREE.Vector3(...a)).cross(new THREE.Vector3().subVectors(new THREE.Vector3(...c),new THREE.Vector3(...a)));
+   if(cross.dot(na)<0){[b,c]=[c,b];[nb.x,nc.x]=[nc.x,nb.x];[nb.y,nc.y]=[nc.y,nb.y];[nb.z,nc.z]=[nc.z,nb.z];}
+   for(const [p,n] of [[a,na],[b,nb],[c,nc]]){positions.push(...p);normals.push(n.x,n.y,n.z);const col=colorAt(...p,part);colors.push(col.r,col.g,col.b);}
+ }
+ for(let x=0;x<nx;x++)for(let y=0;y<ny;y++)for(let z=0;z<nz;z++){
+   const vv=corners.map(c=>values[idx(x+c[0],y+c[1],z+c[2])]);
+   if(vv.every(v=>v>=0)||vv.every(v=>v<0))continue;
+   const pp=corners.map(c=>[xmin+(x+c[0])*dx,ymin+(y+c[1])*dy,zmin+(z+c[2])*dz]);
+   for(const tet of tetrahedra){
+     const ins=tet.filter(i=>vv[i]<0),out=tet.filter(i=>vv[i]>=0);
+     if(!ins.length||!out.length)continue;
+     const cut=(i,j)=>{const t=vv[i]/(vv[i]-vv[j]);return pp[i].map((v,k)=>v+(pp[j][k]-v)*t);};
+     if(ins.length===1){tri(...out.map(j=>cut(ins[0],j)));}
+     else if(ins.length===3){tri(...ins.map(i=>cut(i,out[0])));}
+     else {const a=cut(ins[0],out[0]),b=cut(ins[0],out[1]),c=cut(ins[1],out[0]),d=cut(ins[1],out[1]);tri(a,b,c);tri(b,d,c);}
+   }
+ }
+ const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(normals,3));g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));g.computeBoundingSphere();return g;
+}
+function skinMaterial(part,pass='opaque'){
+ const mat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:1,metalness:0,transparent:pass==='fade'||pass==='fill',depthWrite:pass!=='fade',side:pass==='fade'?THREE.DoubleSide:THREE.FrontSide});
+ mat.forceSinglePass=true;
+ mat.onBeforeCompile=shader=>{
+   Object.assign(shader.uniforms,uniforms,{uPart:{value:part}});
+    shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\n'+deformation+'\nvarying float vFade;');
+    shader.vertexShader=shader.vertexShader.replace('#include <beginnormal_vertex>','vec3 objectNormal=normalize(deform(position+normal*.001)-deform(position));');
+   shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>',`vec3 transformed=deform(position);vFade=${pass==='fill'?'uInfill':'frontFade(position.z)'};`);
+   shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>\nvarying float vFade;');
+   shader.fragmentShader=shader.fragmentShader.replace('#include <dithering_fragment>',`${pass==='fade'?'if(vFade>.999||vFade<.002)discard;gl_FragColor.a*=vFade;':pass==='fill'?'if(vFade<.002)discard;gl_FragColor.a*=vFade;':'if(vFade<.999)discard;'}\n#include <dithering_fragment>`);
+ };
+ mat.customProgramCacheKey=()=>`corgi-skin-${part}-${pass}`;
+ return mat;
+}
+function shadowMaterial(part){
+ const m=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking});
+ m.onBeforeCompile=s=>{
+   Object.assign(s.uniforms,uniforms,{uPart:{value:part}});
+   s.vertexShader=s.vertexShader.replace('#include <common>','#include <common>\n'+deformation+'\nvarying float vShadowFade;');
+   s.vertexShader=s.vertexShader.replace('#include <begin_vertex>','vec3 transformed=deform(position);vShadowFade=frontFade(position.z);');
+   s.fragmentShader=s.fragmentShader.replace('#include <common>','#include <common>\nvarying float vShadowFade;uniform float uNoisePhase;');
+   s.fragmentShader=s.fragmentShader.replace('#include <clipping_planes_fragment>','#include <clipping_planes_fragment>\nif(vShadowFade<.002||fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233))+uNoisePhase)*43758.5453)>vShadowFade)discard;');
+ };
+ m.customProgramCacheKey=()=>`corgi-shadow-${part}`;
+ return m;
+}
+const hitMeshes=[];
+function addSkin(g,part,infill=false){
+ const m=new THREE.Mesh(g,skinMaterial(part,infill?'fill':'opaque'));m.castShadow=!infill;m.receiveShadow=true;m.customDepthMaterial=shadowMaterial(part);scene.add(m);
+ if(part===0&&!infill){const fade=new THREE.Mesh(g,skinMaterial(part,'fade'));fade.receiveShadow=true;fade.renderOrder=1;scene.add(fade);}
+ hitMeshes.push(m);return m;
+}
+const bodyGeometry=implicitMesh(bodyField,[-.83,.83,.25,1.52,-1.98,.98],.033,0);
+const body=addSkin(bodyGeometry,0);
+// View-dependent infill beneath the intentional mid-back fade. It is revealed
+// only when looking into the fading section, giving the crop a soft, closed
+// volume instead of an empty shell. From the sides it dissolves with the coat.
+const innerGeometry=implicitMesh((x,y,z)=>union(
+ ellipsoid(x,y,z,0,.945,-.15,.525,.465,.67),
+ ellipsoid(x,y,z,0,.535,.05,.40,.115,.50),.08
+),[-.55,.55,.39,1.44,-.85,.60],.030,0);
+addSkin(innerGeometry,0,true);
+const legGeometries=[];
+for(const side of [-1,1]){
+ const g=implicitMesh(legField(side),[side*.48-.22,side*.48+.22,.014,.71,-.04,.54],.019,1);
+ legGeometries.push(g);addSkin(g,1);
+}
+const tailGeometry=implicitMesh((x,y,z)=>ellipsoid(x,y,z,0,1.124,.789,.105,.107,.153),[-.13,.13,.99,1.26,.61,.97],.017,2);
+addSkin(tailGeometry,2);
+
+// Instanced, camera-facing curved ribbons: a dense short undercoat plus longer
+// tapered guard hairs. No texture, no repeated fur cards, no fur shadow passes.
+function furGeometry(g,count,part,solid=false){
+ const positions=g.attributes.position.array,normals=g.attributes.normal.array;
+ const triangles=positions.length/9,cdf=new Float64Array(triangles);
+ let area=0;
+ for(let i=0;i<triangles;i++){
+   const k=i*9;const ax=positions[k+3]-positions[k],ay=positions[k+4]-positions[k+1],az=positions[k+5]-positions[k+2];
+   const bx=positions[k+6]-positions[k],by=positions[k+7]-positions[k+1],bz=positions[k+8]-positions[k+2];
+   const a=Math.hypot(ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx)*.5;
+   area+=a;cdf[i]=area;
+ }
+ const roots=[],ns=[],flows=[],colors=[],tips=[],shapes=[];
+ for(let i=0;i<count;i++){
+   const target=random()*area;let lo=0,hi=triangles-1;
+   while(lo<hi){const m=(lo+hi)>>1;if(cdf[m]<target)lo=m+1;else hi=m;}
+   const k=lo*9,s=Math.sqrt(random()),u=1-s,v=random()*s,w=s-v;
+   const p=new THREE.Vector3(),n=new THREE.Vector3();
+   for(let j=0;j<3;j++){p.setComponent(j,positions[k+j]*u+positions[k+3+j]*v+positions[k+6+j]*w);n.setComponent(j,normals[k+j]*u+normals[k+3+j]*v+normals[k+6+j]*w);}
+   n.normalize();
+   const pants=part===0?soft(.13,.62,p.z)*(1-soft(.77,1.05,p.y))*(.45+.55*soft(.08,.4,Math.abs(p.x))):0;
+   let direction=new THREE.Vector3(p.x*.42,-.55,.73);
+   if(p.z>.32){direction.set(p.x*1.2,-.9,.32);}
+   if(part===1) direction.set(p.x*.2,-1,-.19);
+   if(part===2) direction.set(p.x*.4,-.16,.85);
+   direction.addScaledVector(n,-direction.dot(n));
+   if(direction.lengthSq()<.01)direction.set(.1,-1,.15).addScaledVector(n,-new THREE.Vector3(.1,-1,.15).dot(n));
+   direction.normalize();
+   const jitter=new THREE.Vector3(random()-.5,random()-.5,random()-.5).multiplyScalar(.19);
+   direction.add(jitter).addScaledVector(n,-direction.dot(n)).normalize();
+   const guard=random()>.79;
+   let length=(.035+random()*.028)*(guard?1.55:1);
+   length+=pants*(.060+random()*.075);
+   if(part===1)length=(.018+random()*.022)*(p.y>.35?1.6:1);
+   if(part===2)length=.035+random()*.041;
+    // A few sable guard hairs carry naturally dark tips through the coat.
+   const col=colorAt(p.x,p.y,p.z,part,(random()-.5)*.15);
+   const tip=col.clone();
+   if(coat==='sable'&&p.y>.82&&guard&&random()>.55)tip.lerp(dark,.70);
+   const width=(part===1?.0014:.0020)+(guard?.0001:.0008)*random();
+   roots.push(p.x,p.y,p.z);ns.push(n.x,n.y,n.z);flows.push(direction.x,direction.y,direction.z);
+   colors.push(col.r,col.g,col.b);tips.push(tip.r,tip.g,tip.b);shapes.push(length,width,(random()-.5)*2,part===1?.18:.4+pants*.8);
+ }
+ const f=new THREE.InstancedBufferGeometry();
+ const verts=[],indices=[];
+ for(let j=0;j<4;j++)verts.push(-1,j/3,0,1,j/3,0);
+ for(let j=0;j<3;j++){let b=j*2;indices.push(b,b+1,b+2,b+1,b+3,b+2);}
+ f.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));f.setIndex(indices);
+ for(const [name,data,size]of[['iRoot',roots,3],['iNormal',ns,3],['iFlow',flows,3],['iColor',colors,3],['iTip',tips,3],['iShape',shapes,4]])f.setAttribute(name,new THREE.InstancedBufferAttribute(new Float32Array(data),size));
+ f.instanceCount=count;
+ const mat=new THREE.MeshStandardMaterial({roughness:1,metalness:0,transparent:true,depthWrite:false,side:THREE.DoubleSide});
+ mat.forceSinglePass=true;
+ mat.onBeforeCompile=shader=>{
+   Object.assign(shader.uniforms,uniforms,{uPart:{value:part}});
+   shader.vertexShader=shader.vertexShader.replace('#include <common>',`#include <common>
+     attribute vec3 iRoot,iNormal,iFlow,iColor,iTip;attribute vec4 iShape;
+     varying vec3 vFurColor,vTip;varying float vT,vAcross,vFade,vPresence;
+     ${deformation}`);
+   shader.vertexShader=shader.vertexShader.replace('#include <beginnormal_vertex>',`vec3 objectNormal=normalize(deform(iRoot+iNormal*.001)-deform(iRoot));`);
+   shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>',`
+     float t=position.y;
+     vec3 local=iRoot+iNormal*iShape.x*(t*.64-t*t*.24)+iFlow*iShape.x*(t*.36+t*t*.40);
+     local+=cross(iNormal,iFlow)*sin(t*3.14159)*iShape.z*iShape.x*.24;
+     vec3 transformed=deform(local)+uFur*t*t*iShape.w;
+     transformed+=iNormal*sin(uTime*2.2+iShape.z*11.+iRoot.x*12.)*iShape.x*.022*t*t;
+     vec3 tangent=normalize(iNormal*(.64-.48*t)+iFlow*(.36+.80*t));
+     vec3 across=normalize(cross(tangent,normalize(cameraPosition-transformed)));
+     transformed+=across*position.x*iShape.y*(1.-t*t)*(.85+.15*sin(t*3.14159));
+     vT=t;vAcross=position.x;vFurColor=iColor;vTip=iTip;vFade=${solid?'uInfill':'frontFade(iRoot.z)'};
+     vPresence=(iShape.z+1.)*.5;
+   `);
+   shader.fragmentShader=shader.fragmentShader.replace('#include <common>',`#include <common>
+     varying vec3 vFurColor,vTip;varying float vT,vAcross,vFade,vPresence;`);
+   shader.fragmentShader=shader.fragmentShader.replace('#include <color_fragment>',`
+     if(vPresence>vFade*vFade*vFade*vFade)discard;
+     diffuseColor.rgb=mix(vFurColor,vTip,smoothstep(.40,1.,vT))*(.94+.09*vT);
+     diffuseColor.a*=(1.-smoothstep(.48,1.,abs(vAcross)))*(1.-smoothstep(.80,1.,vT))*vFade*vFade*vFade;
+     if(diffuseColor.a<.025)discard;
+   `);
+   // Lighting follows the dog's skin normal, not the arbitrary facing of a
+   // two-sided ribbon. This keeps white fur soft rather than sparkling.
+   shader.fragmentShader=shader.fragmentShader.replace('#include <normal_fragment_begin>','#include <normal_fragment_begin>\nnormal=normalize(vNormal);');
+ };
+ mat.customProgramCacheKey=()=>`corgi-fur-${part}-${solid}`;
+ const mesh=new THREE.Mesh(f,mat);mesh.frustumCulled=false;mesh.receiveShadow=true;mesh.renderOrder=3+part;scene.add(mesh);
+ return mesh;
+}
+furGeometry(bodyGeometry,64000,0);
+furGeometry(innerGeometry,6000,0,true);
+for(const g of legGeometries)furGeometry(g,9000,1);
+furGeometry(tailGeometry,2200,2);
+
+// Small toe seams and muted keratin nails are visible from the sides and the
+// ground-level view. They are not painted onto the rump-facing heels.
+for(const side of [-1,1])for(const offset of [-.087,-.029,.029,.087]){
+ const nail=new THREE.Mesh(new THREE.SphereGeometry(1,10,7),new THREE.MeshStandardMaterial({color:'#786b57',roughness:.92}));
+ nail.scale.set(.013,.013,.029);nail.position.set(side*.482+offset,.049,-.010);
+ const base=nail.position.clone();scene.add(nail);
+ nail.userData.base=base;
+}
+
+let clickIndex=0,active=null,excitement=0;
+let clock=0,last=performance.now(),idleIndex=0,idleStart=0;
+const motion=new THREE.Vector4();
+const spring=new THREE.Vector3(),springVelocity=new THREE.Vector3(),lastBody=new THREE.Vector3();
+let currentHop=0,currentSquash=0;
+function trigger(){
+ const recipe=recipes[clickIndex++%recipes.length];
+ excitement=Math.min(1.6,excitement+.37);
+ active={...recipe,start:clock,duration:[1.14,1.93,1.04,1.34][recipe.type]/recipe.speed/(1+excitement*.22),energy:1+excitement*.43,from:motion.clone(),fromHop:currentHop};
+}
+const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();
+let down=null;
+renderer.domElement.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY,time:performance.now(),id:e.pointerId};});
+renderer.domElement.addEventListener('pointerup',e=>{
+ if(!down||down.id!==e.pointerId)return;
+ const distance=Math.hypot(e.clientX-down.x,e.clientY-down.y);const elapsed=performance.now()-down.time;down=null;
+ if(distance>7||elapsed>700)return;
+ const r=renderer.domElement.getBoundingClientRect();pointer.set((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1);
+ raycaster.setFromCamera(pointer,camera);
+ if(raycaster.intersectObjects(hitMeshes).some(hit=>hit.point.z> -1.38))trigger();
+});
+renderer.domElement.addEventListener('pointercancel',()=>down=null);
+function resize(){
+ const w=Math.max(1,document.documentElement.clientWidth),h=Math.max(1,document.documentElement.clientHeight);
+ renderer.setSize(w,h);camera.aspect=w/h;
+ // Fit the same bounding sphere in either orientation, retaining the 400² default.
+ camera.fov=THREE.MathUtils.radToDeg(2*Math.atan(Math.tan(THREE.MathUtils.degToRad(18))/Math.min(1,w/h)));
+ camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(document.documentElement);resize();
+
+function update(dt){
+ clock+=dt;excitement*=Math.exp(-dt*.72);
+ const idle=idlePhases[idleIndex%idlePhases.length];
+ if(clock-idleStart>idle.duration){idleStart=clock;idleIndex++;}
+ const it=(clock-idleStart)/idle.duration;
+ const lean=idle.lean*Math.sin(Math.PI*it)**2;
+ let x=Math.sin(clock*1.35)*.005+lean,roll=Math.sin(clock*1.35+.5)*.006+lean*.4;
+ let yaw=Math.sin(clock*.73)*.004,dy=Math.sin(clock*2.08)*.004,hop=0,squash=0;
+ if(active){
+   const t=(clock-active.start)/active.duration;
+   if(t>=1)active=null;
+   else {
+     const env=Math.sin(Math.PI*t)**.85;
+     const a=active.amp*active.energy,sign=active.sign;
+     let xx=0,rr=0,yy=0,dd=0;
+     if(active.type===0){
+       const w=t*Math.PI*6.5+active.phase;
+       xx=Math.sin(w)*.083*a*env*sign;rr=Math.sin(w-.42)*.092*a*env*sign;yy=Math.sin(w+.35)*.08*a*env*sign;dd=Math.sin(w*2)*.009*a*env;
+     }else if(active.type===1){
+       const w=t*Math.PI*3.3+active.phase;
+       xx=Math.sin(w)*.13*a*env*sign;rr=Math.sin(w-.65)*.14*a*env*sign;yy=Math.sin(w+.5)*.045*a*env*sign;dd=-Math.abs(Math.sin(w))*.018*a*env;
+     }else if(active.type===2){
+       const w=t*Math.PI*10+active.phase;
+       xx=Math.sin(w+.55)*.052*a*env*sign;rr=Math.sin(w)*.075*a*env*sign;yy=Math.sin(w-.6)*.125*a*env*sign;dd=Math.sin(w*2)*.008*a*env;squash=.032*a*env;
+     }else{
+       const w=t*Math.PI*4;
+       xx=Math.sin(w)*.064*a*env*sign;rr=Math.sin(w-.5)*.076*a*env*sign;yy=Math.sin(w+.8)*.07*a*env*sign;
+       const ht=(t-.29)/.31;
+       if(ht>0&&ht<1)hop=Math.sin(Math.PI*ht)*.115*a;
+       squash=(Math.exp(-(((t-.22)/.075)**2))+Math.exp(-(((t-.63)/.075)**2)))*.045*a;
+     }
+     const blend=soft(0,.13,t);
+     x+=THREE.MathUtils.lerp(active.from.x,xx,blend);roll+=THREE.MathUtils.lerp(active.from.y,rr,blend);yaw+=THREE.MathUtils.lerp(active.from.z,yy,blend);dy+=THREE.MathUtils.lerp(active.from.w,dd,blend);
+     hop=THREE.MathUtils.lerp(active.fromHop,hop,blend);
+   }
+ }
+ motion.set(x,roll,yaw,dy);currentHop=hop;currentSquash=squash;
+ const bodyPosition=new THREE.Vector3(x+roll*.24,dy+hop-squash,yaw*.32);
+ const velocity=bodyPosition.clone().sub(lastBody).multiplyScalar(1/Math.max(dt,.001));
+ lastBody.copy(bodyPosition);
+ // Stable semi-implicit spring integration; tips trail acceleration and settle
+ // after the torso has stopped. Longer breeches have greater spring leverage.
+ const target=velocity.multiplyScalar(-.031);
+ const steps=Math.max(1,Math.ceil(dt/.008));const h=dt/steps;
+ for(let i=0;i<steps;i++){
+   springVelocity.addScaledVector(target.clone().sub(spring),150*h);
+   springVelocity.multiplyScalar(Math.exp(-16*h));
+   spring.addScaledVector(springVelocity,h);
+ }
+ spring.clampLength(0,.11);
+ uniforms.uMotion.value.copy(motion);uniforms.uFur.value.copy(spring);
+ uniforms.uTime.value=clock;uniforms.uHop.value=hop;uniforms.uSquash.value=squash;
+ bellyContact.position.x=x*.45;
+ bellyContact.material.uniforms.opacity.value=.16/(1+hop*3);
+ for(const shadow of footContacts){shadow.material.uniforms.opacity.value=.28/(1+hop*5);shadow.scale.setScalar(1+hop*1.4);}
+ for(const obj of scene.children)if(obj.userData.base)obj.position.y=obj.userData.base.y+hop;
+ controls.update();
+ // At high elevations orbit around the back's height; at ground level orbit
+ // around the floor. The radius never changes. This keeps the long fading
+ // back in frame overhead without raising the low-view camera off the floor.
+ const orbitOffset=camera.position.clone().sub(controls.target);
+ const elevation=THREE.MathUtils.radToDeg(Math.asin(orbitOffset.y/orbitOffset.length()));
+ const orbitHeight=.73*soft(25,60,elevation);
+ const orbitDepth=-.24-.22*soft(30,65,elevation);
+ camera.position.y+=orbitHeight-controls.target.y;
+ camera.position.z+=orbitDepth-controls.target.z;
+ controls.target.y=orbitHeight;
+ controls.target.z=orbitDepth;
+ framingTarget.z=orbitDepth;
+ camera.lookAt(framingTarget);
+ const cameraOffset=camera.position.clone().sub(controls.target);
+ uniforms.uInfill.value=soft(.10,.78,-cameraOffset.z/Math.hypot(cameraOffset.x,cameraOffset.z));
+}
+function frame(now){
+ const dt=THREE.MathUtils.clamp((now-last)/1000,0,.035);last=now;
+ update(dt);renderer.render(scene,camera);requestAnimationFrame(frame);
+}
+document.addEventListener('visibilitychange',()=>{last=performance.now();});
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
