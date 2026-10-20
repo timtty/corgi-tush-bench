@@ -169,6 +169,7 @@
     <!-- filled by script -->
   </div>
   <div class="group" role="group" aria-label="Prompt version" id="versions"></div>
+  <div class="group" role="group" aria-label="Sort" id="sorts"></div>
 </div>
 
 <main id="main"></main>
@@ -202,6 +203,7 @@ const MAX_LIVE = 4; // compare and vote views, which run their entries side by s
 const MAX_COMPARE = 4;
 const STILL_SEED = '1'; // the seed scripts/stills.mjs captures with (its SEED), so a still and its live render match
 const COATS = [['random', 'Random'], ['red', 'Red and white'], ['sable', 'Sable'], ['tri', 'Tricolor'], ['bht', 'Black-headed tricolor']];
+const SORTS = [['old', 'Oldest'], ['new', 'Newest'], ['popular', 'Most popular']]; // the first is the default, manifest order
 
 const $ = (s, el = document) => el.querySelector(s);
 const h = (tag, attrs = {}, ...kids) => {
@@ -223,6 +225,7 @@ const state = {
   coat: COATS.some(c => c[0] === q.get('coat')) ? q.get('coat') : 'random',
   seed: seedInUrl ? q.get('seed') : String(Math.floor(Math.random() * 1e6)),
   version: q.get('v') || 'all',
+  sort: SORTS.some(s => s[0] === q.get('sort')) ? q.get('sort') : SORTS[0][0],
   compare: (q.get('compare') || '').split(',').filter(Boolean),
   run: q.get('run'),
   mode: q.has('vote') ? 'vote' : q.has('board') ? 'board' : null,
@@ -237,7 +240,10 @@ function syncUrl() {
   const p = new URLSearchParams();
   if (state.run) p.set('run', state.run);
   else if (state.compare.length) p.set('compare', state.compare.join(','));
-  else if (state.version !== 'all') p.set('v', state.version);
+  else {
+    if (state.version !== 'all') p.set('v', state.version);
+    if (state.sort !== SORTS[0][0]) p.set('sort', state.sort);
+  }
   if (state.coat !== 'random') p.set('coat', state.coat);
   if (state.run) p.set('seed', seedInUrl ? state.seed : STILL_SEED);
   else if (state.compare.length) p.set('seed', state.seed);
@@ -270,6 +276,7 @@ function refreshStills() {
 
 /* Swap a still for its live render, stopping any other live render first so only one plays at a time. */
 function play(stage) {
+  countPlay(stage._run);
   [...live].filter(s => s !== stage).forEach(s => unload(s));
   load(stage);
   stage.querySelector('iframe').focus();
@@ -296,6 +303,15 @@ function unload(stage, quiet) {
 
 function reloadLive() { [...live].forEach(load); }
 
+/* Tell the server someone played an entry, once per entry per page load. It feeds the
+   popularity sort. Fire and forget: a local preview has no server, and that's fine. */
+const played = new Set();
+function countPlay(run) {
+  if (played.has(run.id)) return;
+  played.add(run.id);
+  fetch('/api/click', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: run.id }), keepalive: true }).catch(() => {});
+}
+
 /* ---------- building blocks ---------- */
 const fmtDate = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 const entryNo = run => runs.indexOf(run) + 1;
@@ -315,12 +331,17 @@ function stageFor(run, { autoplay = false } = {}) {
   return stage;
 }
 
-function facts(run, full) {
+function facts(run, full, pop) {
   const rows = [
     ['Effort', run.effort || 'Not recorded'],
     ['Prompt', run.prompt_version],
     ['Date', fmtDate(run.date)],
   ];
+  if (pop) {
+    const { clicks, votes = 0 } = pop[run.id] || {};
+    const count = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+    rows.push(['Popularity', (clicks == null ? '' : count(clicks, 'play') + ', ') + count(votes, 'vote')]);
+  }
   if (full) rows.push(
     ['Model id', run.model.id],
     ['Provider', run.model.provider],
@@ -337,15 +358,40 @@ function facts(run, full) {
 }
 
 /* ---------- views ---------- */
-function viewStrip() {
+/* Popularity is plays plus votes. The gallery shows entries in the chosen order; ties, and
+   entries submitted the same day, keep manifest order, which is the order they were added. */
+const popScore = (pop, run) => ((pop[run.id] || {}).clicks || 0) + ((pop[run.id] || {}).votes || 0);
+
+/* Until the server has /api/popularity, count votes from each prompt version's leaderboard.
+   Plays aren't known then, so entries rank by votes alone. */
+async function popularity() {
+  try { return (await api('/api/popularity')).runs; } catch {}
+  const first = await api('/api/leaderboard');
+  const rest = await Promise.all((first.versions || []).filter(v => v !== first.v)
+    .map(v => api('/api/leaderboard?v=' + encodeURIComponent(v))));
+  const pop = {};
+  for (const d of [first, ...rest]) for (const r of d.rows || []) pop[r.id] = { votes: r.games };
+  return pop;
+}
+
+async function viewStrip() {
   const shown = runs.filter(r => state.version === 'all' || r.prompt_version === state.version);
   if (!shown.length) return h('p', { class: 'empty', text: 'No entries for this prompt version yet.' });
-  return h('div', { class: 'gallery', 'aria-label': 'Entries' }, shown.map(run =>
+  let pop = null, note = null;
+  if (state.sort === 'popular') {
+    try { pop = await popularity(); }
+    catch { note = h('p', { class: 'empty', style: 'padding:0 24px 8px;margin:0', text: 'Popularity needs the site’s server, so this list falls back to newest first.' }); }
+  }
+  const byDate = (a, b) => a.date.localeCompare(b.date) || runs.indexOf(a) - runs.indexOf(b);
+  const sorted = [...shown].sort(
+    pop ? (a, b) => popScore(pop, b) - popScore(pop, a) || -byDate(a, b)
+      : state.sort === 'old' ? byDate : (a, b) => -byDate(a, b));
+  return h('div', {}, note, h('div', { class: 'gallery', 'aria-label': 'Entries' }, sorted.map(run =>
     h('figure', { class: 'entry' },
       stageFor(run),
       h('figcaption', { class: 'caption' },
         h('h2', {}, h('a', { href: '?run=' + encodeURIComponent(run.id), text: run.model.name })),
-        facts(run),
+        facts(run, false, pop),
         h('div', { class: 'actions' },
           h('label', {}, h('input', {
             type: 'checkbox', checked: state.picked.has(run.id),
@@ -354,7 +400,7 @@ function viewStrip() {
           h('a', { href: '?run=' + encodeURIComponent(run.id), text: 'Details' }),
         ),
       ),
-    )));
+    ))));
 }
 
 function viewCompare() {
@@ -523,10 +569,16 @@ function controls() {
     class: 'chip', type: 'button', 'aria-pressed': String(state.coat === id), text: label,
     onclick: () => { state.coat = id; controls(); syncUrl(); refreshStills(); reloadLive(); },
   }));
-  const vs = $('#versions');
-  vs.replaceChildren();
+  const vs = $('#versions'), ss = $('#sorts');
+  vs.replaceChildren(); ss.replaceChildren();
+  if (state.mode || state.run || state.compare.length) return;
+  ss.append(h('span', { text: 'Sort' }));
+  for (const [id, label] of SORTS) ss.append(h('button', {
+    class: 'chip', type: 'button', 'aria-pressed': String(state.sort === id), text: label,
+    onclick: () => { state.sort = id; route(); },
+  }));
   const used = [...new Set(runs.map(r => r.prompt_version))].sort().reverse();
-  if (state.mode || state.run || state.compare.length || used.length < 2) return;
+  if (used.length < 2) return;
   vs.append(h('span', { text: 'Prompt' }));
   for (const v of ['all', ...used]) vs.append(h('button', {
     class: 'chip', type: 'button', 'aria-pressed': String(state.version === v), text: v === 'all' ? 'All' : v,
